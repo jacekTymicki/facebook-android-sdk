@@ -1,15 +1,15 @@
 /**
  * Copyright (c) 2014-present, Facebook, Inc. All rights reserved.
- *
+ * <p/>
  * You are hereby granted a non-exclusive, worldwide, royalty-free license to use,
  * copy, modify, and distribute this software in source code or binary form for use
  * in connection with the web services and APIs provided by Facebook.
- *
+ * <p/>
  * As with any software that integrates with the Facebook platform, your use of
  * this software is subject to the Facebook Developer Principles and Policies
  * [http://developers.facebook.com/policy/]. This copyright notice shall be
  * included in all copies or substantial portions of the software.
- *
+ * <p/>
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
  * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
@@ -20,35 +20,50 @@
 
 package com.example.hellofacebook;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.v4.app.FragmentActivity;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 
-import com.facebook.*;
+import com.facebook.AccessToken;
+import com.facebook.CallbackManager;
+import com.facebook.FacebookAuthorizationException;
+import com.facebook.FacebookCallback;
+import com.facebook.FacebookException;
+import com.facebook.FacebookSdk;
+import com.facebook.Profile;
+import com.facebook.ProfileTracker;
 import com.facebook.appevents.AppEventsLogger;
+import com.facebook.internal.Utility;
 import com.facebook.login.LoginManager;
 import com.facebook.login.LoginResult;
 import com.facebook.login.widget.ProfilePictureView;
 import com.facebook.share.ShareApi;
 import com.facebook.share.Sharer;
+import com.facebook.share.model.ShareLinkContent;
 import com.facebook.share.model.SharePhoto;
 import com.facebook.share.model.SharePhotoContent;
-import com.facebook.share.model.ShareLinkContent;
+import com.facebook.share.model.ShareVideo;
+import com.facebook.share.model.ShareVideoContent;
 import com.facebook.share.widget.ShareDialog;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-public class HelloFacebookSampleActivity extends FragmentActivity {
+public class HelloFacebookSampleActivity extends Activity {
 
     private static final String PERMISSION = "publish_actions";
     private static final Location SEATTLE_LOCATION = new Location("") {
@@ -63,11 +78,13 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
 
     private Button postStatusUpdateButton;
     private Button postPhotoButton;
+    private Button postVideoButton;
     private ProfilePictureView profilePictureView;
     private TextView greeting;
     private PendingAction pendingAction = PendingAction.NONE;
     private boolean canPresentShareDialog;
     private boolean canPresentShareDialogWithPhotos;
+    private boolean canPresentShareDialogWithVideos;
     private CallbackManager callbackManager;
     private ProfileTracker profileTracker;
     private ShareDialog shareDialog;
@@ -108,6 +125,7 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
     private enum PendingAction {
         NONE,
         POST_PHOTO,
+        POST_VIDEO,
         POST_STATUS_UPDATE
     }
 
@@ -115,7 +133,7 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         FacebookSdk.sdkInitialize(this.getApplicationContext());
-
+        setContentView(R.layout.main);
         callbackManager = CallbackManager.Factory.create();
 
         LoginManager.getInstance().registerCallback(callbackManager,
@@ -164,8 +182,6 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
             pendingAction = PendingAction.valueOf(name);
         }
 
-        setContentView(R.layout.main);
-
         profileTracker = new ProfileTracker() {
             @Override
             protected void onCurrentProfileChanged(Profile oldProfile, Profile currentProfile) {
@@ -193,6 +209,14 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
             }
         });
 
+        postVideoButton = (Button) findViewById(R.id.postVideoButton);
+        postVideoButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onClickPostVideo();
+            }
+        });
+
         // Can we present the share dialog for regular links?
         canPresentShareDialog = ShareDialog.canShow(
                 ShareLinkContent.class);
@@ -200,6 +224,9 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
         // Can we present the share dialog for photos?
         canPresentShareDialogWithPhotos = ShareDialog.canShow(
                 SharePhotoContent.class);
+
+        // Can we present the share dialog for videos?
+        canPresentShareDialogWithVideos = ShareDialog.canShow(ShareVideoContent.class);
     }
 
     @Override
@@ -248,6 +275,7 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
 
         postStatusUpdateButton.setEnabled(enableButtons || canPresentShareDialog);
         postPhotoButton.setEnabled(enableButtons || canPresentShareDialogWithPhotos);
+        postVideoButton.setEnabled(enableButtons || canPresentShareDialogWithVideos);
 
         Profile profile = Profile.getCurrentProfile();
         if (enableButtons && profile != null) {
@@ -270,6 +298,9 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
                 break;
             case POST_PHOTO:
                 postPhoto();
+                break;
+            case POST_VIDEO:
+                postVideo();
                 break;
             case POST_STATUS_UPDATE:
                 postStatusUpdate();
@@ -322,6 +353,57 @@ public class HelloFacebookSampleActivity extends FragmentActivity {
                     Arrays.asList(PERMISSION));
         }
     }
+
+    private void onClickPostVideo() {
+        performPublish(PendingAction.POST_VIDEO, canPresentShareDialogWithVideos);
+    }
+
+    private void postVideo() {
+        File tempFile = null;
+        try {
+            tempFile = createTempFileFromAsset("test_video.mp4");
+        } catch (IOException e) {
+            Log.e("io", "postVideo: " + e.toString());
+        }
+        ShareVideo video = new ShareVideo.Builder()
+                .setLocalUrl(Uri.fromFile(tempFile))
+                .build();
+        ShareVideoContent shareVideoContent = new ShareVideoContent.Builder().setVideo(video).build();
+        if (canPresentShareDialogWithVideos) {
+            shareDialog.show(shareVideoContent);
+        } else if (hasPublishPermission()) {
+            ShareApi.share(shareVideoContent, shareCallback);
+        } else {
+            LoginManager.getInstance().logInWithPublishPermissions(this, Arrays.asList(PERMISSION));
+        }
+    }
+
+    protected File createTempFileFromAsset(String assetPath) throws IOException {
+        InputStream inputStream = null;
+        FileOutputStream outStream = null;
+
+        try {
+            AssetManager assets = getResources().getAssets();
+            inputStream = assets.open(assetPath);
+
+            File outputDir = getCacheDir(); // context being the Activity pointer
+            File outputFile = File.createTempFile("prefix", assetPath, outputDir);
+            outStream = new FileOutputStream(outputFile);
+
+            final int bufferSize = 1024 * 2;
+            byte[] buffer = new byte[bufferSize];
+            int n = 0;
+            while ((n = inputStream.read(buffer)) != -1) {
+                outStream.write(buffer, 0, n);
+            }
+
+            return outputFile;
+        } finally {
+            Utility.closeQuietly(outStream);
+            Utility.closeQuietly(inputStream);
+        }
+    }
+
 
     private boolean hasPublishPermission() {
         AccessToken accessToken = AccessToken.getCurrentAccessToken();
